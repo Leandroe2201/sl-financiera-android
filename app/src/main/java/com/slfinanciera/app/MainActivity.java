@@ -38,11 +38,7 @@ import com.google.firebase.messaging.FirebaseMessaging;
 
 import org.json.JSONObject;
 
-import java.io.OutputStream;
-import java.net.HttpURLConnection;
 import java.net.URI;
-import java.net.URL;
-import java.nio.charset.StandardCharsets;
 
 public class MainActivity extends Activity {
 
@@ -140,42 +136,38 @@ public class MainActivity extends Activity {
 
     private void tryRegisterPushToken() {
         final String token = fcmToken;
-        final String base = apiBase();
-        if (token == null || token.length() < 30 || base.isEmpty()) return;
+        if (token == null || token.length() < 30 || webView == null) return;
 
-        final String endpoint = base + "/api/mi-tarjeta/push/register";
-        final String cookie = CookieManager.getInstance().getCookie(BuildConfig.HOME_URL);
-        if (cookie == null || cookie.trim().isEmpty()) return;
+        // IMPORTANTE: el registro se hace DESDE el propio WebView.
+        // Así fetch() usa automáticamente la misma cookie/sesión Flask con la que
+        // el cliente inició sesión. Evita el fallo de la versión 1.1, donde el
+        // HttpURLConnection separado podía no compartir correctamente la sesión.
+        final String device = Build.MANUFACTURER + " " + Build.MODEL + " · Android " + Build.VERSION.RELEASE;
+        final String js = "(function(){" +
+                "fetch('/api/mi-tarjeta/push/register',{" +
+                "method:'POST'," +
+                "credentials:'same-origin'," +
+                "headers:{'Content-Type':'application/json'}," +
+                "body:JSON.stringify({token:" + JSONObject.quote(token) + ",dispositivo:" + JSONObject.quote(device) + "})" +
+                "}).then(async function(r){var t=await r.text();return JSON.stringify({status:r.status,ok:r.ok,body:t});})" +
+                ".catch(function(e){return JSON.stringify({status:0,ok:false,body:String(e)});});" +
+                "})()";
 
-        new Thread(() -> {
-            HttpURLConnection con = null;
+        runOnUiThread(() -> {
             try {
-                URL url = new URL(endpoint);
-                con = (HttpURLConnection) url.openConnection();
-                con.setConnectTimeout(8000);
-                con.setReadTimeout(8000);
-                con.setRequestMethod("POST");
-                con.setDoOutput(true);
-                con.setRequestProperty("Content-Type", "application/json; charset=utf-8");
-                con.setRequestProperty("Accept", "application/json");
-                con.setRequestProperty("Cookie", cookie);
-                con.setRequestProperty("User-Agent", "SLFinancieraAndroid/1.1 PUSH");
-
-                JSONObject body = new JSONObject();
-                body.put("token", token);
-                body.put("dispositivo", Build.MANUFACTURER + " " + Build.MODEL + " · Android " + Build.VERSION.RELEASE);
-                byte[] bytes = body.toString().getBytes(StandardCharsets.UTF_8);
-                try (OutputStream os = con.getOutputStream()) {
-                    os.write(bytes);
-                }
-                int code = con.getResponseCode();
-                if (code >= 200 && code < 300) pushRegistered = true;
-            } catch (Exception ignored) {
+                webView.evaluateJavascript(js, result -> {
+                    // evaluateJavascript devuelve el resultado como string JSON escapado.
+                    // Para marcar registrado alcanza con detectar respuesta HTTP 2xx/ok=true.
+                    if (result != null && (result.contains("\\"ok\\":true") || result.contains("\"ok\":true"))) {
+                        pushRegistered = true;
+                    } else {
+                        pushRegistered = false;
+                    }
+                });
+            } catch (Exception e) {
                 pushRegistered = false;
-            } finally {
-                if (con != null) con.disconnect();
             }
-        }).start();
+        });
     }
 
     private boolean isUrlConfigured() {
@@ -210,7 +202,7 @@ public class MainActivity extends Activity {
         settings.setSupportZoom(false);
         settings.setBuiltInZoomControls(false);
         settings.setDisplayZoomControls(false);
-        settings.setUserAgentString(settings.getUserAgentString() + " SLFinancieraAndroid/1.1");
+        settings.setUserAgentString(settings.getUserAgentString() + " SLFinancieraAndroid/1.2");
 
         CookieManager cookies = CookieManager.getInstance();
         cookies.setAcceptCookie(true);
