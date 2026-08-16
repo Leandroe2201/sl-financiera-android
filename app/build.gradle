@@ -1,0 +1,33 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.slfinanciera.app'
+    compileSdk 36
+
+    defaultConfig {
+        applicationId 'com.slfinanciera.app'
+        minSdk 26
+        targetSdk 36
+        versionCode 1
+        versionName '1.0.0'
+
+        def homeUrl = project.findProperty('SL_HOME_URL') ?: 'https://TU-DOMINIO.com/mi-tarjeta'
+        buildConfigField 'String', 'HOME_URL', '"' + homeUrl + '"'
+    }
+
+    buildFeatures {
+        buildConfig true
+    }
+
+    buildTypes {
+        debug {
+            debuggable true
+        }
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+}
