@@ -1,0 +1,10 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <!-- Isotipo SL: bloque azul y letras geométricas blancas -->
+    <path android:fillColor="#2864F0" android:pathData="M18,18h72v72h-72z"/>
+    <!-- S -->
+    <path android:fillColor="#FFFFFF" android:pathData="M29,31h27v7h-27z M29,38h7v12h-7z M29,49h27v7h-27z M49,56h7v13h-7z M29,68h27v7h-27z"/>
+    <!-- L -->
+    <path android:fillColor="#FFFFFF" android:pathData="M64,31h7v37h-7z M64,68h17v7h-17z"/>
+</vector>

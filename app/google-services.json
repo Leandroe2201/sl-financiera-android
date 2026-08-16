@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "434643499133",
+    "project_id": "sl-financiera",
+    "storage_bucket": "sl-financiera.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:434643499133:android:31d6af4b63a43c667c9914",
+        "android_client_info": {
+          "package_name": "com.slfinanciera.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBKdBhTrp9fyxPcZLmcdUJxxVYDLkIJU5I"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
