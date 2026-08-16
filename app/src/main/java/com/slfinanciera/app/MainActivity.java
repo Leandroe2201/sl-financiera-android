@@ -39,6 +39,12 @@ import com.google.firebase.messaging.FirebaseMessaging;
 import org.json.JSONObject;
 
 import java.net.URI;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.io.OutputStream;
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
 
 public class MainActivity extends Activity {
 
@@ -136,38 +142,76 @@ public class MainActivity extends Activity {
 
     private void tryRegisterPushToken() {
         final String token = fcmToken;
-        if (token == null || token.length() < 30 || webView == null) return;
+        if (token == null || token.length() < 30) return;
 
-        // IMPORTANTE: el registro se hace DESDE el propio WebView.
-        // Así fetch() usa automáticamente la misma cookie/sesión Flask con la que
-        // el cliente inició sesión. Evita el fallo de la versión 1.1, donde el
-        // HttpURLConnection separado podía no compartir correctamente la sesión.
+        // v1.3: registro NATIVO con la MISMA cookie de sesión que usa el WebView.
+        // La versión 1.2 dependía de evaluateJavascript/fetch y en algunos WebView
+        // el POST no llegaba al backend. Acá copiamos explícitamente la cookie Flask
+        // desde CookieManager y la enviamos al endpoint de registro FCM.
         final String device = Build.MANUFACTURER + " " + Build.MODEL + " · Android " + Build.VERSION.RELEASE;
-        final String js = "(function(){" +
-                "fetch('/api/mi-tarjeta/push/register',{" +
-                "method:'POST'," +
-                "credentials:'same-origin'," +
-                "headers:{'Content-Type':'application/json'}," +
-                "body:JSON.stringify({token:" + JSONObject.quote(token) + ",dispositivo:" + JSONObject.quote(device) + "})" +
-                "}).then(async function(r){var t=await r.text();return JSON.stringify({status:r.status,ok:r.ok,body:t});})" +
-                ".catch(function(e){return JSON.stringify({status:0,ok:false,body:String(e)});});" +
-                "})()";
+        final String endpoint = apiBase() + "/api/mi-tarjeta/push/register";
+        if (endpoint.startsWith("/api") || apiBase().isEmpty()) return;
 
-        runOnUiThread(() -> {
+        new Thread(() -> {
+            HttpURLConnection con = null;
             try {
-                webView.evaluateJavascript(js, result -> {
-                    // evaluateJavascript devuelve el resultado como string JSON escapado.
-                    // Para marcar registrado alcanza con detectar respuesta HTTP 2xx/ok=true.
-                    if (result != null && (result.contains("\\"ok\\":true") || result.contains("\"ok\":true"))) {
-                        pushRegistered = true;
-                    } else {
-                        pushRegistered = false;
-                    }
-                });
+                CookieManager cm = CookieManager.getInstance();
+                String cookie = cm.getCookie(BuildConfig.HOME_URL);
+                if (cookie == null || cookie.trim().isEmpty()) cookie = cm.getCookie(apiBase());
+
+                // Si todavía no existe cookie significa que el cliente aún no inició sesión.
+                if (cookie == null || cookie.trim().isEmpty()) {
+                    pushRegistered = false;
+                    return;
+                }
+
+                URL url = new URL(endpoint);
+                con = (HttpURLConnection) url.openConnection();
+                con.setRequestMethod("POST");
+                con.setConnectTimeout(10000);
+                con.setReadTimeout(10000);
+                con.setDoOutput(true);
+                con.setRequestProperty("Content-Type", "application/json; charset=UTF-8");
+                con.setRequestProperty("Accept", "application/json");
+                con.setRequestProperty("Cookie", cookie);
+                con.setRequestProperty("User-Agent", "SLFinancieraAndroid/1.3 " + Build.MANUFACTURER + " " + Build.MODEL);
+
+                JSONObject body = new JSONObject();
+                body.put("token", token);
+                body.put("dispositivo", device);
+                byte[] payload = body.toString().getBytes(StandardCharsets.UTF_8);
+                con.setFixedLengthStreamingMode(payload.length);
+                try (OutputStream os = con.getOutputStream()) {
+                    os.write(payload);
+                    os.flush();
+                }
+
+                int code = con.getResponseCode();
+                BufferedReader br = new BufferedReader(new InputStreamReader(
+                        (code >= 200 && code < 400) ? con.getInputStream() : con.getErrorStream(),
+                        StandardCharsets.UTF_8));
+                StringBuilder response = new StringBuilder();
+                String line;
+                while ((line = br.readLine()) != null) response.append(line);
+                br.close();
+
+                if (code >= 200 && code < 300 && response.toString().contains("\"ok\":true")) {
+                    boolean first = !pushRegistered;
+                    pushRegistered = true;
+                    if (first) runOnUiThread(() -> Toast.makeText(MainActivity.this,
+                            "Notificaciones de SL Financiera activadas", Toast.LENGTH_SHORT).show());
+                } else {
+                    // 401 es normal mientras el usuario todavía no inició sesión: se reintenta.
+                    pushRegistered = false;
+                    android.util.Log.w("SL_PUSH", "Registro FCM HTTP " + code + " -> " + response);
+                }
             } catch (Exception e) {
                 pushRegistered = false;
+                android.util.Log.e("SL_PUSH", "No se pudo registrar token FCM", e);
+            } finally {
+                if (con != null) con.disconnect();
             }
-        });
+        }).start();
     }
 
     private boolean isUrlConfigured() {
@@ -202,7 +246,7 @@ public class MainActivity extends Activity {
         settings.setSupportZoom(false);
         settings.setBuiltInZoomControls(false);
         settings.setDisplayZoomControls(false);
-        settings.setUserAgentString(settings.getUserAgentString() + " SLFinancieraAndroid/1.2");
+        settings.setUserAgentString(settings.getUserAgentString() + " SLFinancieraAndroid/1.3");
 
         CookieManager cookies = CookieManager.getInstance();
         cookies.setAcceptCookie(true);
