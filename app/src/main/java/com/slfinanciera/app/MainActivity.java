@@ -34,6 +34,7 @@ import android.widget.ProgressBar;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import com.google.firebase.FirebaseApp;
 import com.google.firebase.messaging.FirebaseMessaging;
 
 import org.json.JSONObject;
@@ -59,6 +60,8 @@ public class MainActivity extends Activity {
     private String allowedHost;
     private String fcmToken;
     private boolean pushRegistered = false;
+    private boolean firebaseReady = false;
+    private String pushDiagnostic = "INICIANDO";
     private final Handler pushHandler = new Handler(Looper.getMainLooper());
 
     @Override
@@ -106,28 +109,71 @@ public class MainActivity extends Activity {
     }
 
     private void initPush() {
+        try {
+            FirebaseApp app = FirebaseApp.initializeApp(this);
+            firebaseReady = (app != null);
+            if (!firebaseReady) {
+                pushDiagnostic = "FIREBASE_CONFIG_NO_CARGADA";
+                Toast.makeText(this, "Firebase no pudo inicializarse. Revisar google-services.json", Toast.LENGTH_LONG).show();
+                android.util.Log.e("SL_PUSH", pushDiagnostic);
+                return;
+            }
+            FirebaseMessaging.getInstance().setAutoInitEnabled(true);
+            pushDiagnostic = "FIREBASE_OK";
+        } catch (Exception e) {
+            firebaseReady = false;
+            pushDiagnostic = "FIREBASE_ERROR: " + e.getMessage();
+            android.util.Log.e("SL_PUSH", pushDiagnostic, e);
+            Toast.makeText(this, "Error Firebase: " + String.valueOf(e.getMessage()), Toast.LENGTH_LONG).show();
+            return;
+        }
+
         String saved = getSharedPreferences(SLFirebaseMessagingService.PREFS, MODE_PRIVATE)
                 .getString(SLFirebaseMessagingService.KEY_TOKEN, "");
-        if (saved != null && !saved.isEmpty()) fcmToken = saved;
+        if (saved != null && !saved.isEmpty()) {
+            fcmToken = saved;
+            pushDiagnostic = "TOKEN_GUARDADO_OK";
+        }
 
-        try {
-            FirebaseMessaging.getInstance().getToken().addOnCompleteListener(task -> {
-                if (!task.isSuccessful() || task.getResult() == null) return;
-                fcmToken = task.getResult();
-                getSharedPreferences(SLFirebaseMessagingService.PREFS, MODE_PRIVATE)
-                        .edit().putString(SLFirebaseMessagingService.KEY_TOKEN, fcmToken).apply();
-                pushRegistered = false;
-                tryRegisterPushToken();
-            });
-        } catch (Exception ignored) { }
+        FirebaseMessaging.getInstance().getToken().addOnCompleteListener(task -> {
+            if (!task.isSuccessful()) {
+                Exception ex = task.getException();
+                pushDiagnostic = "TOKEN_ERROR: " + (ex == null ? "desconocido" : ex.getMessage());
+                android.util.Log.e("SL_PUSH", pushDiagnostic, ex);
+                runOnUiThread(() -> Toast.makeText(MainActivity.this,
+                        "No se pudo obtener token PUSH: " + (ex == null ? "error desconocido" : ex.getMessage()),
+                        Toast.LENGTH_LONG).show());
+                return;
+            }
+            String token = task.getResult();
+            if (token == null || token.length() < 30) {
+                pushDiagnostic = "TOKEN_VACIO";
+                android.util.Log.e("SL_PUSH", pushDiagnostic);
+                return;
+            }
+            fcmToken = token;
+            pushDiagnostic = "TOKEN_OK";
+            getSharedPreferences(SLFirebaseMessagingService.PREFS, MODE_PRIVATE)
+                    .edit().putString(SLFirebaseMessagingService.KEY_TOKEN, fcmToken).apply();
+            android.util.Log.i("SL_PUSH", "FCM token obtenido. Longitud=" + fcmToken.length());
+            pushRegistered = false;
+            tryRegisterPushToken();
+        });
 
         pushHandler.postDelayed(new Runnable() {
             @Override
             public void run() {
-                if (!pushRegistered) tryRegisterPushToken();
-                pushHandler.postDelayed(this, pushRegistered ? 300000 : 15000);
+                if (!pushRegistered) {
+                    String savedNow = getSharedPreferences(SLFirebaseMessagingService.PREFS, MODE_PRIVATE)
+                            .getString(SLFirebaseMessagingService.KEY_TOKEN, "");
+                    if ((fcmToken == null || fcmToken.isEmpty()) && savedNow != null && !savedNow.isEmpty()) {
+                        fcmToken = savedNow;
+                    }
+                    tryRegisterPushToken();
+                }
+                pushHandler.postDelayed(this, pushRegistered ? 300000 : 10000);
             }
-        }, 7000);
+        }, 5000);
     }
 
     private String apiBase() {
@@ -142,7 +188,10 @@ public class MainActivity extends Activity {
 
     private void tryRegisterPushToken() {
         final String token = fcmToken;
-        if (token == null || token.length() < 30) return;
+        if (token == null || token.length() < 30) {
+            android.util.Log.w("SL_PUSH", "Registro omitido: todavía no hay token FCM");
+            return;
+        }
 
         // v1.3: registro NATIVO con la MISMA cookie de sesión que usa el WebView.
         // La versión 1.2 dependía de evaluateJavascript/fetch y en algunos WebView
@@ -162,6 +211,8 @@ public class MainActivity extends Activity {
                 // Si todavía no existe cookie significa que el cliente aún no inició sesión.
                 if (cookie == null || cookie.trim().isEmpty()) {
                     pushRegistered = false;
+                    pushDiagnostic = "TOKEN_OK_SIN_SESION";
+                    android.util.Log.w("SL_PUSH", "Hay token FCM pero todavía no hay cookie de sesión Flask");
                     return;
                 }
 
@@ -174,7 +225,7 @@ public class MainActivity extends Activity {
                 con.setRequestProperty("Content-Type", "application/json; charset=UTF-8");
                 con.setRequestProperty("Accept", "application/json");
                 con.setRequestProperty("Cookie", cookie);
-                con.setRequestProperty("User-Agent", "SLFinancieraAndroid/1.3 " + Build.MANUFACTURER + " " + Build.MODEL);
+                con.setRequestProperty("User-Agent", "SLFinancieraAndroid/1.4 " + Build.MANUFACTURER + " " + Build.MODEL);
 
                 JSONObject body = new JSONObject();
                 body.put("token", token);
@@ -198,12 +249,17 @@ public class MainActivity extends Activity {
                 if (code >= 200 && code < 300 && response.toString().contains("\"ok\":true")) {
                     boolean first = !pushRegistered;
                     pushRegistered = true;
+                    pushDiagnostic = "REGISTRO_SL_OK";
+                    android.util.Log.i("SL_PUSH", "Token FCM registrado en SL Financiera HTTP " + code);
                     if (first) runOnUiThread(() -> Toast.makeText(MainActivity.this,
-                            "Notificaciones de SL Financiera activadas", Toast.LENGTH_SHORT).show());
+                            "Notificaciones PUSH activadas correctamente", Toast.LENGTH_LONG).show());
                 } else {
                     // 401 es normal mientras el usuario todavía no inició sesión: se reintenta.
                     pushRegistered = false;
+                    pushDiagnostic = "REGISTRO_HTTP_" + code;
                     android.util.Log.w("SL_PUSH", "Registro FCM HTTP " + code + " -> " + response);
+                    final String msg = "PUSH no registrado (HTTP " + code + ")";
+                    runOnUiThread(() -> Toast.makeText(MainActivity.this, msg, Toast.LENGTH_LONG).show());
                 }
             } catch (Exception e) {
                 pushRegistered = false;
@@ -246,7 +302,7 @@ public class MainActivity extends Activity {
         settings.setSupportZoom(false);
         settings.setBuiltInZoomControls(false);
         settings.setDisplayZoomControls(false);
-        settings.setUserAgentString(settings.getUserAgentString() + " SLFinancieraAndroid/1.3");
+        settings.setUserAgentString(settings.getUserAgentString() + " SLFinancieraAndroid/1.4");
 
         CookieManager cookies = CookieManager.getInstance();
         cookies.setAcceptCookie(true);

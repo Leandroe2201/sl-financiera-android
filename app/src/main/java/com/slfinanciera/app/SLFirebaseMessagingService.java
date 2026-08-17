@@ -22,6 +22,10 @@ public class SLFirebaseMessagingService extends FirebaseMessagingService {
     public void onNewToken(String token) {
         super.onNewToken(token);
         getSharedPreferences(PREFS, MODE_PRIVATE).edit().putString(KEY_TOKEN, token).apply();
+        android.util.Log.i("SL_PUSH", "onNewToken recibido. Longitud=" + (token == null ? 0 : token.length()));
+        Intent refresh = new Intent("com.slfinanciera.app.FCM_TOKEN_REFRESHED");
+        refresh.setPackage(getPackageName());
+        sendBroadcast(refresh);
     }
 
     @Override
