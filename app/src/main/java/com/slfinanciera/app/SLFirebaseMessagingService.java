@@ -13,14 +13,26 @@ import com.google.firebase.messaging.FirebaseMessagingService;
 import com.google.firebase.messaging.RemoteMessage;
 
 public class SLFirebaseMessagingService extends FirebaseMessagingService {
-
     private static final String CHANNEL_ID = "sl_financiera_alertas";
+    private static final String PREFS = "sl_financiera_push";
+    private static final String PREF_FID = "firebase_installation_id";
 
     @Override
-    public void onNewToken(String token) {
-        super.onNewToken(token);
-        getSharedPreferences("sl_financiera", MODE_PRIVATE)
-                .edit().putString("fcm_token", token).apply();
+    public void onRegistered(String installationId) {
+        super.onRegistered(installationId);
+        getSharedPreferences(PREFS, MODE_PRIVATE)
+                .edit()
+                .putString(PREF_FID, installationId)
+                .apply();
+    }
+
+    @Override
+    public void onUnregistered(String installationId) {
+        super.onUnregistered(installationId);
+        getSharedPreferences(PREFS, MODE_PRIVATE)
+                .edit()
+                .remove(PREF_FID)
+                .apply();
     }
 
     @Override
@@ -32,14 +44,15 @@ public class SLFirebaseMessagingService extends FirebaseMessagingService {
         String path = remoteMessage.getData().get("path");
 
         if (remoteMessage.getNotification() != null) {
-            if (titulo == null || titulo.trim().isEmpty()) titulo = remoteMessage.getNotification().getTitle();
-            if (cuerpo == null || cuerpo.trim().isEmpty()) cuerpo = remoteMessage.getNotification().getBody();
+            if (titulo == null || titulo.isEmpty())
+                titulo = remoteMessage.getNotification().getTitle();
+            if (cuerpo == null || cuerpo.isEmpty())
+                cuerpo = remoteMessage.getNotification().getBody();
         }
 
-        if (titulo == null || titulo.trim().isEmpty()) titulo = "SL Financiera";
-        if (cuerpo == null || cuerpo.trim().isEmpty()) cuerpo = "Tenés una nueva notificación.";
-        if (path == null || path.trim().isEmpty()) path = remoteMessage.getData().get("url");
-        if (path == null || path.trim().isEmpty()) path = "/mi-tarjeta";
+        if (titulo == null || titulo.isEmpty()) titulo = "SL Financiera";
+        if (cuerpo == null || cuerpo.isEmpty()) cuerpo = "Tenés una nueva notificación.";
+        if (path == null || path.isEmpty()) path = "/mi-tarjeta";
 
         crearCanal();
 
@@ -47,26 +60,26 @@ public class SLFirebaseMessagingService extends FirebaseMessagingService {
         intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
         intent.putExtra("push_path", path);
 
-        PendingIntent pendingIntent = PendingIntent.getActivity(
+        PendingIntent pi = PendingIntent.getActivity(
                 this,
                 (int) System.currentTimeMillis(),
                 intent,
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
         );
 
-        NotificationCompat.Builder builder = new NotificationCompat.Builder(this, CHANNEL_ID)
+        NotificationCompat.Builder b = new NotificationCompat.Builder(this, CHANNEL_ID)
                 .setSmallIcon(R.drawable.ic_notification_sl)
                 .setContentTitle(titulo)
                 .setContentText(cuerpo)
                 .setStyle(new NotificationCompat.BigTextStyle().bigText(cuerpo))
                 .setPriority(NotificationCompat.PRIORITY_HIGH)
                 .setAutoCancel(true)
-                .setContentIntent(pendingIntent);
+                .setContentIntent(pi);
 
         try {
             NotificationManagerCompat.from(this).notify(
                     (int) (System.currentTimeMillis() % Integer.MAX_VALUE),
-                    builder.build()
+                    b.build()
             );
         } catch (SecurityException ignored) {}
     }
@@ -78,7 +91,6 @@ public class SLFirebaseMessagingService extends FirebaseMessagingService {
                     "Alertas SL Financiera",
                     NotificationManager.IMPORTANCE_HIGH
             );
-            channel.setDescription("Transferencias, acreditaciones, saldos y avisos de SL Financiera");
             NotificationManager manager = getSystemService(NotificationManager.class);
             if (manager != null) manager.createNotificationChannel(channel);
         }
